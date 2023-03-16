@@ -1,3 +1,4 @@
+# Имортируем библиотеки
 import numpy as np
 import rospy
 from clover import srv
@@ -19,7 +20,7 @@ navigate = rospy.ServiceProxy('navigate', srv.Navigate)
 set_position = rospy.ServiceProxy('set_position', srv.SetPosition)
 set_velocity = rospy.ServiceProxy('set_velocity', srv.SetVelocity)
 land = rospy.ServiceProxy('land', Trigger)
-
+# Ожидаем прилёт в заданную точку
 def navigate_wait(x=0, y=0, z=0, yaw=float('nan'), speed=0.5, frame_id='', auto_arm=False, tolerance=0.1):
     navigate(x=x, y=y, z=z, yaw=yaw, speed=speed, frame_id=frame_id, auto_arm=auto_arm)
     while not rospy.is_shutdown():
@@ -27,26 +28,26 @@ def navigate_wait(x=0, y=0, z=0, yaw=float('nan'), speed=0.5, frame_id='', auto_
         if math.sqrt(telem.x ** 2 + telem.y ** 2 + telem.z ** 2) < tolerance:
             break
         rospy.sleep(0.2)
-
+# Функция посадки
 def land_wait():
     land()
     while get_telemetry().armed:
         rospy.sleep(0.2)
 
 
-
+# Списки для хранения информации о возгорании и пострадавших
 fire_arr = []
 hurt_arr = []
 # hsv-диапазоны для распознования возгорания, пострадавшего и зоны посадки
 fire_min, fire_max = [9, 68, 121], [35, 180, 255]
 hurt_min, hurt_max = [90, 75, 0], [255, 255, 255]
 land_min, land_max = [68, 20, 95], [90, 60, 161]
-
+# image topic для отладки
 fire_detect = rospy.Publisher("/fire_detect", Image, queue_size=1)
 hurt_detect = rospy.Publisher("/hurt_detect", Image, queue_size=1)
 color_debug = rospy.Publisher("/color_debug", Image, queue_size=1)
 land_debug = rospy.Publisher("/land_debug", Image, queue_size=1)
-
+# координаты центра изображения
 img = bridge.imgmsg_to_cv2(rospy.wait_for_message('main_camera/image_raw', Image), 'bgr8')
 x_center, y_center = img.shape[1] / 2, img.shape[0] / 2 # Центр изображения
 
@@ -100,10 +101,10 @@ def PIDresult(Pk, Ik, Dk, P, I, D, err, preverr, tim): # Принимает: 3 �
         D = (err-preverr) / tim # Считаем D составляющую
     out = P * Pk + I * Ik + D * Dk # Складываем составляющие, умножая их на коэффициенты
     return out
-
+# функция для центрирования над зоной посадки
 def land_image(data):
     global oldtime, x_preverr, y_preverr, z_preverr, h_land
-    realtime = time.time()
+    realtime = time.time() # Текущее время
     land_cv_image = bridge.imgmsg_to_cv2(data, 'bgr8')  # OpenCV image
     land_cv_image_copy = land_cv_image.copy() # Копия изображения
     land_hsv = cv2.cvtColor(land_cv_image, cv2.COLOR_BGR2HSV) # Переводим из BGR в HSV
@@ -114,7 +115,7 @@ def land_image(data):
     # Если есть посадочная площадка, летим к ней
     if len(contours) > 0:
         cnt = contours[0]
-        if cv2.contourArea(cnt) > 50:
+        if cv2.contourArea(cnt) > 50: 
             rect = cv2.minAreaRect(cnt) # пытаемся вписать прямоугольник
             (x_min, y_min), (w_min, h_min), angle = rect
             height = rospy.wait_for_message('rangefinder/range', Range).range # Текущая высота
@@ -132,7 +133,7 @@ def land_image(data):
             set_velocity(vx=Xout, vy=Yout, vz=Zout, frame_id='body', yaw=float('nan'))
             # Запоминаем время для PID-регулятора
             oldtime = time.time()
-
+# Функция для распознования возгораний и пострадавших
 def image_callback(data):
     # возгорание
     cv_image = bridge.imgmsg_to_cv2(data, 'bgr8')
@@ -152,8 +153,9 @@ def image_callback(data):
             fire_detect.publish(bridge.cv2_to_imgmsg(fire_cv_image_copy, 'bgr8')) # публикуем обработанное изображение в fire_detect
             # если возгорание близко к центру изображения, определяем его координаты (координаты коптера)
             if abs(y_minkvad - y_center) < 75 and abs(x_minkvad - x_center) < 75:
-                telem_im = get_telemetry(frame_id='aruco_map')
-                xfire = telem_im.x
+                # Координаты возгорания (коптера)
+                telem_im = get_telemetry(frame_id='aruco_map') 
+                xfire = telem_im.x 
                 yfire = telem_im.y
                 # проверяем, что это не тот же самое возгорание
                 if len(fire_arr) > 0:
@@ -170,12 +172,14 @@ def image_callback(data):
                             ans = "-"
                         else:
                             material = r.split('"')[1]
+                            # Определяем класс возгорания 
                             if material == "coal" or material == "textiles" or material == "plastics":
                                 clas = "A"
                                 dop = [xfire, yfire, material, clas]
                             elif material == "oil" or material == "alcohol" or material == "glycerine":
                                 clas = "B"
                                 dop = [xfire, yfire, material, clas]
+                            # Записываем информацию о возгорании в список
                             fire_arr.append(dop)
     # пострадавший
     hurt_cv_image = cv_image.copy()
@@ -195,6 +199,7 @@ def image_callback(data):
             # если пострадавший близко к центру изображения, определяем его координаты (координаты коптера)
             if abs(y_minkvad - y_center) < 75 and abs(x_minkvad - x_center) < 75:
                 telem_im = get_telemetry(frame_id='aruco_map')
+                # Координаты пострадавшего (коптера)
                 xhurt = telem_im.x
                 yhurt = telem_im.y
                 # проверяем, что это не тот же самый пострадавший
@@ -204,6 +209,7 @@ def image_callback(data):
                         if math.sqrt((x_dop - xhurt) ** 2 + (y_dop - yhurt) ** 2) < 0.3:
                             break
                     else:
+                        # Ищем ближайшее возгорание
                         mn = 999999999
                         count = 1
                         count_mn = -1
@@ -215,15 +221,17 @@ def image_callback(data):
                                 count_mn = count
                             count += 1
                         dop = [xhurt, yhurt, count_mn]
+                        # Записываем информацию о пострадавшем в список
                         hurt_arr.append(dop)
 
 navigate_wait(z=1, frame_id='body', auto_arm=True) # Взлёт
 telem = get_telemetry(frame_id='aruco_map')
 xstart, ystart = telem.x, telem.y # Запоминаем координаты зоны взлёта/посадки
+# Список координат точек для посещения
 points = [[0.0, ystart], [0.0, 0.0], [0.0, 3.0], [1.5, 3.0], [1.5, 4.0], [4.0, 4.0], [4.0, 1.0], [4.0, 2.5], [7.0, 2.5], [7.0, 0.5], [7.0, 3.5], [4.0, 3.5], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0], [xstart, ystart]]
 
 fire_hurt_sub = rospy.Subscriber('main_camera/image_raw_throttled', Image, image_callback, queue_size=1) # Вкл мониторинг
-
+# Полёт по точкам
 for point in points:
     x_point, y_point = point[0], point[1]
     navigate_wait(x=x_point, y=y_point, z=0.7, frame_id='body', auto_arm=True)  # Полёт по точкам
@@ -232,7 +240,7 @@ fire_hurt_sub.unregister() # Откл мониторинг
 
 # Посадка
 h_land = 0.8
-land_sub = rospy.Subscriber('main_camera/image_raw_throttled', Image, land_image, queue_size=1)
+land_sub = rospy.Subscriber('main_camera/image_raw_throttled', Image, land_image, queue_size=1) # Центрирование относительно посадочной площадки
 rospy.sleep(5)
 h_land = 0.5
 rospy.sleep(3)
@@ -240,6 +248,7 @@ land_sub.unregister()
 set_position(frame_id='aruco_map')
 land_wait()
 
+# Вывод отчёта
 print("Fires: {count}".format(len(fire_arr)))
 count = 1
 for fire in fire_arr:
